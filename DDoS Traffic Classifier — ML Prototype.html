@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DDoS Traffic Classifier — ML Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#101c22; --panel:#16262e; --panel-2:#1c2f38; --line:#2a4049;
+  --text:#e7f1ee; --sub:#9fb8b9; --accent:#e3a857; --benign:#5fb8d6;
+  --syn:#d97757; --udp:#c98bd6; --drdos:#d65f5f; --good:#7fbf8f;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  box-sizing:border-box;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f3f1ea; --panel:#ffffff; --panel-2:#fbfaf6; --line:#ddd6c8;
+    --text:#161b1e; --sub:#5a6367; --accent:#b5762a;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#f3f1ea; --panel:#ffffff; --panel-2:#fbfaf6; --line:#ddd6c8;
+  --text:#161b1e; --sub:#5a6367; --accent:#b5762a;
+}
+*{box-sizing:border-box;}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+html,body{height:100%;}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:'IBM Plex Mono',monospace; font-size:14px; line-height:1.5;
+  min-height:100%;
+}
+h1,h2,h3,.disp{font-family:'Space Grotesk',sans-serif;}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px;}
+header{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between;align-items:flex-end;
+  border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:22px;}
+header h1{font-size:26px;font-weight:700;margin:0 0 6px;letter-spacing:-0.02em;}
+header p{margin:0;color:var(--sub);max-width:52ch;font-size:13px;}
+.badge-row{display:flex;gap:10px;flex-wrap:wrap;}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 14px;min-width:92px;}
+.stat b{display:block;font-family:'Space Grotesk',sans-serif;font-size:19px;color:var(--accent);}
+.stat span{color:var(--sub);font-size:11px;text-transform:none;}
+.grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;}
+@media (max-width:860px){.grid{grid-template-columns:1fr;}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:18px;}
+.panel h2{font-size:15px;margin:0 0 4px;font-weight:600;}
+.panel .hint{color:var(--sub);font-size:12px;margin:0 0 14px;}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+button{
+  font-family:'IBM Plex Mono',monospace;font-size:12.5px;border:1px solid var(--line);
+  background:var(--panel-2);color:var(--text);padding:8px 13px;border-radius:6px;cursor:pointer;
+}
+button:hover{border-color:var(--accent);}
+button.active{background:var(--accent);color:#12181a;border-color:var(--accent);font-weight:600;}
+button.primary{background:var(--good);color:#0d1b12;border-color:var(--good);font-weight:600;}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+thead th{text-align:left;color:var(--sub);font-weight:500;padding:5px 6px;border-bottom:1px solid var(--line);font-size:11px;}
+tbody td{padding:6px;border-bottom:1px solid var(--line);white-space:nowrap;}
+.feed-wrap{overflow-x:auto;max-height:420px;overflow-y:auto;}
+.tag{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;display:inline-block;}
+.t-benign{background:rgba(95,184,214,.18);color:var(--benign);}
+.t-syn{background:rgba(217,119,87,.18);color:var(--syn);}
+.t-udp{background:rgba(201,139,214,.18);color:var(--udp);}
+.t-drdos{background:rgba(214,95,95,.18);color:var(--drdos);}
+.match-ok{color:var(--good);font-weight:700;}
+.match-bad{color:var(--drdos);font-weight:700;}
+tr.row-bad{background:rgba(214,95,95,.06);}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--sub);margin-top:10px;}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle;}
+canvas{width:100%;display:block;}
+.mini-table td,.mini-table th{padding:5px 7px;font-size:11.5px;}
+.cm-cell{text-align:center;font-weight:600;border-radius:4px;}
+.foot{color:var(--sub);font-size:11.5px;margin-top:26px;border-top:1px solid var(--line);padding-top:16px;}
+.pill{font-size:10.5px;color:var(--sub);border:1px solid var(--line);border-radius:20px;padding:2px 9px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>DDoS Traffic Classifier</h1>
+      <p>Live prototype for the case study "Machine Learning-Based Detection and Classification of DDoS Attacks," trained on a real 44,000-flow CICDDoS2019 sample. A decision tree classifies flows into Benign, SYN Flood, UDP Flood, or DrDoS reflection traffic in real time.</p>
+    </div>
+    <div class="badge-row">
+      <div class="stat"><b id="statAcc">–</b><span>test accuracy</span></div>
+      <div class="stat"><b id="statLiveAcc">–</b><span>live replay accuracy</span></div>
+      <div class="stat"><b id="statFlows">0</b><span>flows classified</span></div>
+      <div class="stat"><b id="statAlerts">0</b><span>attack flows flagged</span></div>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h2>Live traffic feed</h2>
+        <p class="hint">Real flows sampled from the held-out CICDDoS2019 test set, replayed through the trained decision tree. Each row shows the flow's real (ground-truth) label next to what the model predicted, so you can see exactly where it gets it right or wrong.</p>
+        <div class="controls">
+          <button id="btnPlay" class="primary">▶ Start stream</button>
+          <button class="mode" data-mode="benign">Normal traffic</button>
+          <button class="mode" data-mode="syn">Inject SYN flood</button>
+          <button class="mode" data-mode="udp">Inject UDP flood</button>
+          <button class="mode" data-mode="drdos">Inject DrDoS burst</button>
+        </div>
+        <div class="feed-wrap">
+          <table>
+            <thead><tr>
+              <th>Time</th><th>Pkt/s</th><th>KB/s</th><th>Duration</th><th>SYN ratio</th><th>Down/Up</th><th>Actual class</th><th>Predicted</th><th>Conf.</th><th>Match</th>
+            </tr></thead>
+            <tbody id="feedBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Detection timeline</h2>
+        <p class="hint">Each bar is one classified flow, colored by predicted class, over the last 60 flows.</p>
+        <canvas id="timeline" height="90"></canvas>
+        <div class="legend">
+          <span><i style="background:var(--benign)"></i>Benign</span>
+          <span><i style="background:var(--syn)"></i>SYN Flood</span>
+          <span><i style="background:var(--udp)"></i>UDP Flood</span>
+          <span><i style="background:var(--drdos)"></i>DrDoS</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Model</h2>
+        <p class="hint" id="modelHint">Decision tree · 6 real flow features · trained and evaluated on a class-balanced split of the CICDDoS2019 sample.</p>
+        <table class="mini-table">
+          <thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
+          <tbody id="metricsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Confusion matrix</h2>
+        <p class="hint">Rows = actual class, columns = predicted class, on the held-out test set.</p>
+        <table class="mini-table" id="cmTable"></table>
+      </div>
+
+      <div class="panel">
+        <h2>Class mix seen</h2>
+        <div id="classMix"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Model comparison</h2>
+    <p class="hint">Six classifiers named in the case study's literature review, trained on the same balanced 12,000-flow train / 4,000-flow test split of the real CICDDoS2019 sample. The live demo above runs the Decision Tree, since its splits are simple threshold checks that translate directly into browser JS.</p>
+    <div class="feed-wrap">
+      <table>
+        <thead><tr><th>Model</th><th>Accuracy</th><th>Precision</th><th>Recall</th><th>F1</th><th>Train time</th><th>Inference / flow</th></tr></thead>
+        <tbody id="cmpBody"></tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin:14px 0 0;">This mirrors what the case study reports: Random Forest and XGBoost lead, the single Decision Tree is close behind, and Logistic Regression trails — because the "DrDoS" class here merges 8 different reflection protocols (DNS, LDAP, MSSQL, NetBIOS, NTP, SNMP, SSDP, TFTP) into one label, and that combined class isn't linearly separable from the others the way a single-protocol attack is.</p>
+  </div>
+
+  <div class="foot">
+    Trained on a real, user-provided CICDDoS2019 sample (44,000 flows, CIC flow-level features), class-balanced to 16,000 flows across Benign / SYN Flood / UDP Flood / DrDoS before the 75/25 split. Built to illustrate the detection pipeline described in the case study (data collection → preprocessing → feature selection → model training → evaluation). Not intended for production traffic filtering.
+  </div>
+</div>
+
+<script>
+const MODEL = {"classes": ["Benign", "SYN_Flood", "UDP_Flood", "DrDoS"], "feature_names": ["packet_rate", "byte_rate_kbs", "flow_duration_s", "avg_packet_size", "syn_flag_ratio", "down_up_ratio"], "type": "decision_tree", "feature": [3, 3, 3, 2, 5, 3, 0, -2, -2, -2, -2, 0, 0, 2, -2, -2, 2, 5, -2, -2, 0, -2, -2, 0, 5, 0, -2, -2, 0, -2, -2, 2, 0, -2, -2, 2, -2, -2, 5, 3, 1, 2, 2, -2, -2, 3, -2, -2, -2, 2, 3, -2, 2, -2, -2, -2, -2, 1, 3, 1, 3, 1, 3, -2, -2, 0, -2, -2, 3, -2, 2, -2, -2, 3, -2, -2, 3, -2, 3, 3, 0, -2, -2, 2, -2, -2, 3, 3, -2, -2, -2, 3, 1, -2, -2, -2, 3, 3, 2, -2, 2, 2, -2, 2, -2, -2, 3, 0, -2, 1, -2, -2, -2, 2, 1, 0, 0, 3, -2, -2, -2, 2, 2, -2, -2, 1, -2, -2, 3, 0, 5, -2, -2, 2, -2, -2, 1, 2, -2, -2, 3, -2, -2, 3, 2, 0, -2, -2, 3, 0, -2, -2, -2, 5, 3, 0, -2, -2, -2, -2, 5, 2, 3, 1, 3, 3, -2, -2, 1, -2, -2, 3, 3, -2, -2, 3, -2, -2, 1, 1, -2, -2, 1, 3, -2, -2, 3, -2, -2, 1, 0, 3, 3, -2, -2, -2, 3, 3, -2, -2, 2, -2, -2, 1, 3, 3, -2, -2, -2, -2, 1, -2, -2], "threshold": [316.1447296142578, 9.125, 5.671428442001343, 1.499999996212864e-06, 1.0, 0.75, 1000000.0, -2.0, -2.0, -2.0, -2.0, 29161.646484375, 0.33810874819755554, 40.12949895858765, -2.0, -2.0, 0.13182199746370316, 2.5, -2.0, -2.0, 32.386138916015625, -2.0, -2.0, 44610.283203125, 1.5, 38314.73828125, -2.0, -2.0, 30457.6376953125, -2.0, -2.0, 2.5000000505315256e-06, 1250000.0, -2.0, -2.0, 2.89999998130952e-05, -2.0, -2.0, 1.5, 7.75, 125.38216400146484, 0.5934309810400009, 0.0002569999924162403, -2.0, -2.0, 6.2928571701049805, -2.0, -2.0, -2.0, 0.00010449999899719842, 8.5, -2.0, 1.499999996212864e-06, -2.0, -2.0, -2.0, -2.0, 93750.0, 272.07374572753906, 70556.640625, 94.35802459716797, 42968.75, 75.22674560546875, -2.0, -2.0, 1250000.0, -2.0, -2.0, 94.73302459716797, -2.0, 0.02089450042694807, -2.0, -2.0, 60.0, -2.0, -2.0, 273.4270782470703, -2.0, 294.9608459472656, 286.00604248046875, 51.29181396961212, -2.0, -2.0, 2.766019620001316, -2.0, -2.0, 305.61830139160156, 304.9047546386719, -2.0, -2.0, -2.0, 177.0, 145507.8125, -2.0, -2.0, -2.0, 601.75, 371.0, 0.0017245000344701111, -2.0, 0.05747400037944317, 0.04001200012862682, -2.0, 0.045213500037789345, -2.0, -2.0, 327.03016662597656, 43.48299789428711, -2.0, 114.08576583862305, -2.0, -2.0, -2.0, 1.0294890403747559, 17.649189949035645, 36.74697494506836, 36.74663734436035, 395.3705291748047, -2.0, -2.0, -2.0, 0.10640450194478035, 0.10639449954032898, -2.0, -2.0, 12.705055236816406, -2.0, -2.0, 496.0, 518.9225158691406, 0.5, -2.0, -2.0, 3.5000000480067683e-06, -2.0, -2.0, 1412.2034301757812, 0.06291750073432922, -2.0, -2.0, 513.9166564941406, -2.0, -2.0, 537.4166564941406, 1.2312889695167542, 24.746249198913574, -2.0, -2.0, 403.54966735839844, 4.39653754234314, -2.0, -2.0, -2.0, 0.5, 585.2916564941406, 3.898182988166809, -2.0, -2.0, -2.0, -2.0, 0.5, 1.499999996212864e-06, 770.25, 939453.125, 606.75, 605.25, -2.0, -2.0, 924804.6875, -2.0, -2.0, 733.5, 729.75, -2.0, -2.0, 759.0, -2.0, -2.0, 989257.8125, 399902.34375, -2.0, -2.0, 1523925.8125, 1203.5, -2.0, -2.0, 2202.0, -2.0, -2.0, 1075846.34375, 291666.671875, 1377.9583129882812, 697.5, -2.0, -2.0, -2.0, 2175.0, 783.0, -2.0, -2.0, 4.499999931795173e-06, -2.0, -2.0, 1433593.75, 1972.5, 1878.0, -2.0, -2.0, -2.0, -2.0, 13605.83984375, -2.0, -2.0], "children_left": [1, 2, 3, 4, 5, 6, 7, -1, -1, -1, -1, 12, 13, 14, -1, -1, 17, 18, -1, -1, 21, -1, -1, 24, 25, 26, -1, -1, 29, -1, -1, 32, 33, -1, -1, 36, -1, -1, 39, 40, 41, 42, 43, -1, -1, 46, -1, -1, -1, 50, 51, -1, 53, -1, -1, -1, -1, 58, 59, 60, 61, 62, 63, -1, -1, 66, -1, -1, 69, -1, 71, -1, -1, 74, -1, -1, 77, -1, 79, 80, 81, -1, -1, 84, -1, -1, 87, 88, -1, -1, -1, 92, 93, -1, -1, -1, 97, 98, 99, -1, 101, 102, -1, 104, -1, -1, 107, 108, -1, 110, -1, -1, -1, 114, 115, 116, 117, 118, -1, -1, -1, 122, 123, -1, -1, 126, -1, -1, 129, 130, 131, -1, -1, 134, -1, -1, 137, 138, -1, -1, 141, -1, -1, 144, 145, 146, -1, -1, 149, 150, -1, -1, -1, 154, 155, 156, -1, -1, -1, -1, 161, 162, 163, 164, 165, 166, -1, -1, 169, -1, -1, 172, 173, -1, -1, 176, -1, -1, 179, 180, -1, -1, 183, 184, -1, -1, 187, -1, -1, 190, 191, 192, 193, -1, -1, -1, 197, 198, -1, -1, 201, -1, -1, 204, 205, 206, -1, -1, -1, -1, 211, -1, -1], "children_right": [96, 57, 38, 11, 10, 9, 8, -1, -1, -1, -1, 23, 16, 15, -1, -1, 20, 19, -1, -1, 22, -1, -1, 31, 28, 27, -1, -1, 30, -1, -1, 35, 34, -1, -1, 37, -1, -1, 56, 49, 48, 45, 44, -1, -1, 47, -1, -1, -1, 55, 52, -1, 54, -1, -1, -1, -1, 91, 76, 73, 68, 65, 64, -1, -1, 67, -1, -1, 70, -1, 72, -1, -1, 75, -1, -1, 78, -1, 86, 83, 82, -1, -1, 85, -1, -1, 90, 89, -1, -1, -1, 95, 94, -1, -1, -1, 160, 113, 100, -1, 106, 103, -1, 105, -1, -1, 112, 109, -1, 111, -1, -1, -1, 143, 128, 121, 120, 119, -1, -1, -1, 125, 124, -1, -1, 127, -1, -1, 136, 133, 132, -1, -1, 135, -1, -1, 140, 139, -1, -1, 142, -1, -1, 153, 148, 147, -1, -1, 152, 151, -1, -1, -1, 159, 158, 157, -1, -1, -1, -1, 210, 189, 178, 171, 168, 167, -1, -1, 170, -1, -1, 175, 174, -1, -1, 177, -1, -1, 182, 181, -1, -1, 186, 185, -1, -1, 188, -1, -1, 203, 196, 195, 194, -1, -1, -1, 200, 199, -1, -1, 202, -1, -1, 209, 208, 207, -1, -1, -1, -1, 212, -1, -1], "class_id": [0, 1, 1, 0, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 3, 0, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 0, 0, 0, 0, 2, 2, 3, 0, 0, 0, 3, 0, 3, 0, 2, 0, 3, 2, 2, 3, 3, 0, 2, 2, 2, 3, 2, 0, 0, 0, 2, 2, 0, 0, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 3, 2, 2, 2, 2, 3, 0, 3, 0, 3, 3, 3, 2, 0, 3, 0, 2, 2, 2, 3, 0, 0, 3, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 2, 2, 2, 3, 3, 2, 3, 3, 3, 0, 3, 3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 2, 3, 3, 3, 3, 3, 2, 3, 3, 0, 0, 0], "node_confidence": [0.25, 0.4854, 0.6882, 0.7387, 0.8087, 0.8194, 0.8267, 0.8462, 0.8241, 1.0, 1.0, 0.883, 0.9422, 0.75, 1.0, 1.0, 0.9473, 0.9655, 0.9704, 0.9143, 0.9104, 0.9196, 1.0, 0.7349, 0.5902, 0.875, 0.7333, 0.96, 0.9048, 0.5, 0.9474, 0.8564, 0.7656, 0.6957, 0.9444, 0.9032, 0.9479, 0.75, 0.9211, 0.9515, 0.992, 0.9847, 0.9231, 0.5, 1.0, 0.9978, 0.9375, 0.9989, 1.0, 0.9012, 0.9296, 1.0, 0.94, 0.9764, 0.8288, 1.0, 1.0, 0.966, 0.9686, 0.9735, 0.974, 0.9779, 0.9785, 0.9742, 0.9935, 0.8, 1.0, 1.0, 0.9591, 1.0, 0.9617, 0.9101, 0.9783, 0.75, 1.0, 1.0, 0.7778, 1.0, 0.814, 0.6111, 0.7857, 0.5, 1.0, 0.5, 1.0, 1.0, 0.96, 0.9, 1.0, 1.0, 1.0, 0.6667, 0.5, 1.0, 1.0, 1.0, 0.5092, 0.6581, 0.9211, 1.0, 0.6207, 0.9444, 1.0, 0.5, 1.0, 1.0, 0.9, 0.6667, 1.0, 0.8, 1.0, 1.0, 1.0, 0.7855, 0.809, 0.9183, 0.899, 0.9001, 0.9762, 0.8917, 1.0, 0.9396, 0.9071, 0.9111, 1.0, 0.9534, 0.9193, 0.968, 0.7146, 0.9176, 0.5172, 0.3684, 0.9, 0.9712, 0.6842, 0.9878, 0.8872, 0.56, 0.7273, 0.9286, 0.9011, 0.56, 0.9071, 0.6952, 0.92, 0.5, 1.0, 1.0, 0.9565, 0.8333, 0.5, 1.0, 1.0, 0.9, 0.973, 0.9863, 1.0, 0.75, 1.0, 1.0, 0.8635, 0.8956, 0.966, 0.9042, 0.9766, 0.6667, 0.7143, 0.5, 0.9902, 0.9947, 0.9375, 0.5745, 0.625, 0.5, 1.0, 0.6774, 0.7692, 0.8, 0.9897, 0.9062, 1.0, 1.0, 0.9938, 0.9769, 0.9922, 1.0, 0.9981, 1.0, 0.9975, 0.772, 0.6828, 0.9214, 0.8406, 0.9216, 0.6111, 1.0, 0.5079, 0.6174, 0.5479, 0.9048, 0.6579, 0.6912, 0.625, 0.9167, 0.9722, 0.9, 1.0, 1.0, 1.0, 0.9048, 0.9821, 1.0, 0.5], "accuracy": 0.9347, "precision": [0.9457, 0.9842, 0.8707, 0.946], "recall": [0.957, 0.995, 0.963, 0.824], "f1": [0.9513, 0.9896, 0.9145, 0.8808], "confusion_matrix": [[957, 16, 5, 22], [3, 995, 0, 2], [14, 0, 963, 23], [38, 0, 138, 824]], "test_size": 4000, "train_size": 12000, "node_count": 213, "source": "CICDDoS2019 sample (44,000 real flows, user-provided; class-balanced to 16,000)"};
+const FLOW_POOL = {"Benign": [[0.7161, 0.1278, 117.3047, 182.7857, 0.0, 1.0], [190.8215, 13.6967, 0.021, 80.75, 0.0, 1.0], [189.9967, 6.1229, 0.0211, 39.25, 0.0, 1.0], [11194.0299, 0.0, 0.0003, 0.0, 0.0, 0.0], [71.2276, 0.0, 0.0281, 0.0, 0.0, 1.0], [95.8773, 0.0, 0.0209, 0.0, 0.0, 1.0], [190.776, 12.1098, 0.021, 74.25, 0.0, 1.0], [189.6184, 14.2584, 0.0211, 90.25, 0.0, 1.0], [66.9109, 4.1819, 0.0598, 73.5, 0.0, 1.0], [10452.9617, 0.0, 0.0003, 0.0, 0.0, 2.0], [187.6085, 9.3438, 0.0213, 61.75, 0.0, 1.0], [10.9276, 0.0, 0.183, 0.0, 0.0, 1.0], [13.5995, 1.2012, 0.6618, 90.4444, 0.0, 0.0], [1000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [191.5801, 8.419, 0.0209, 52.25, 0.0, 1.0], [0.8497, 0.1464, 61.1979, 176.4615, 0.0, 0.0], [23255.814, 136.2645, 0.0001, 8.0, 0.0, 2.0], [8.6267, 3.92, 6.0278, 465.3077, 0.0, 0.0], [123.9119, 0.0605, 0.0323, 0.75, 0.0, 1.0], [15000.0, 87.8906, 0.0002, 8.0, 0.0, 2.0], [2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1000000.0, 18066.4062, 0.0, 34.0, 0.0, 0.0], [192.5206, 6.2043, 0.0208, 39.25, 0.0, 1.0], [8752.7352, 262.8385, 0.0005, 42.25, 0.0, 0.0], [3.9063, 0.0, 1.024, 0.0, 0.0, 0.0], [4.509, 1.8376, 7.0969, 417.3125, 0.0, 1.0], [189.7893, 9.4524, 0.0211, 61.75, 0.0, 1.0], [25423.7288, 0.0, 0.0001, 0.0, 0.0, 2.0], [85.8811, 3.2709, 0.0466, 46.75, 0.0, 1.0], [2000000.0, 30273.4375, 0.0, 31.0, 0.0, 0.0], [8726.0035, 160.204, 0.0006, 26.4, 0.0, 0.0], [48.852, 0.0, 0.0409, 0.0, 0.0, 1.0], [192.1691, 10.2278, 0.0208, 63.5, 0.0, 1.0], [192.0953, 16.133, 0.0208, 97.5, 0.0, 1.0], [190.3583, 13.0128, 0.021, 79.0, 0.0, 1.0], [88.7115, 3.3787, 0.0451, 46.75, 0.0, 1.0], [500000.0, 13346.3542, 0.0, 40.0, 0.0, 0.0], [189.8975, 12.1468, 0.0211, 76.75, 0.0, 1.0], [17021.2766, 0.0, 0.0002, 0.0, 0.0, 0.0], [88.9521, 5.7332, 0.045, 75.5, 0.0, 1.0], [4545.4545, 113.1925, 0.0009, 35.25, 0.0, 0.0], [1000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [193.2927, 23.4065, 0.0207, 132.5, 0.0, 1.0], [191.6994, 13.5725, 0.0209, 83.25, 0.0, 1.0], [1.3616, 0.0, 7.3444, 0.0, 0.0, 4.0], [13636.3636, 0.0, 0.0002, 0.0, 0.0, 2.0], [15151.5152, 88.7784, 0.0003, 7.5, 0.0, 3.0], [279.7855, 2.8234, 0.0214, 10.3333, 0.0, 4.0], [16393.4426, 0.0, 0.0002, 0.0, 0.0, 2.0], [2.2367, 2.3837, 116.2449, 1091.3154, 0.0, 1.0], [666666.6667, 8029.5139, 0.0, 17.5, 0.0, 0.0], [188.2264, 31.0647, 0.0213, 179.25, 0.0, 1.0], [192.8083, 12.2388, 0.0207, 74.25, 0.0, 1.0], [48.8234, 0.2861, 0.041, 9.0, 0.0, 1.0], [50000.0, 0.0, 0.0001, 0.0, 0.0, 2.0], [193.6202, 10.0214, 0.0207, 64.25, 0.0, 1.0], [31.8157, 0.0, 0.0629, 0.0, 0.0, 1.0], [14285.7143, 0.0, 0.0002, 0.0, 0.0, 2.0], [140.2574, 0.4109, 0.0285, 4.5, 0.0, 1.0], [87.3763, 7.8502, 0.0458, 104.75, 0.0, 1.0]], "SYN_Flood": [[36036.036, 211.1486, 0.0001, 7.5, 0.0, 1.0], [0.0, 0.0, 0.0, 9.0, 0.0, 0.0], [42553.1915, 249.3351, 0.0, 9.0, 0.0, 0.0], [0.2375, 0.0014, 33.6869, 6.75, 0.0, 0.0], [0.0, 0.0, 0.0, 9.0, 0.0, 0.0], [0.5714, 0.0033, 7.0007, 7.5, 0.0, 0.0], [39215.6863, 229.7794, 0.0001, 7.5, 0.0, 1.0], [37037.037, 217.0139, 0.0001, 7.5, 0.0, 1.0], [40816.3265, 239.1582, 0.0, 9.0, 0.0, 0.0], [0.1832, 0.0011, 32.7571, 7.0, 0.0, 0.0], [32520.3252, 190.5488, 0.0001, 7.5, 0.0, 1.0], [41237.1134, 241.6237, 0.0001, 7.5, 0.0, 1.0], [48780.4878, 285.8232, 0.0, 9.0, 0.0, 0.0], [75471.6981, 442.217, 0.0001, 7.5, 0.0, 1.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [32258.0645, 189.0121, 0.0001, 7.5, 0.0, 1.0], [0.2928, 0.0017, 47.8218, 6.4286, 0.0, 0.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [0.624, 0.0037, 28.8458, 6.3333, 0.0, 0.0], [38461.5385, 225.3606, 0.0001, 7.5, 0.0, 1.0], [0.0, 0.0, 0.0, 9.0, 0.0, 0.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [42553.1915, 249.3351, 0.0, 9.0, 0.0, 0.0], [0.2956, 0.0017, 33.8323, 6.6, 0.0, 0.0], [40816.3265, 239.1582, 0.0, 9.0, 0.0, 0.0], [42553.1915, 249.3351, 0.0, 9.0, 0.0, 0.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [0.228, 0.0013, 26.3188, 7.0, 0.0, 0.0], [0.3787, 0.0022, 42.2468, 6.375, 0.0, 0.0], [0.1962, 0.0011, 40.7701, 6.75, 0.0, 0.0], [42553.1915, 249.3351, 0.0, 9.0, 0.0, 0.0], [0.2327, 0.0014, 34.3744, 6.75, 0.0, 0.0], [0.2623, 0.0015, 38.1309, 6.6, 0.0, 0.0], [0.3645, 0.0021, 32.9203, 6.5, 0.0, 0.0], [0.3082, 0.0018, 32.4443, 6.6, 0.0, 0.0], [40816.3265, 239.1582, 0.0, 9.0, 0.0, 0.0], [0.5313, 0.0031, 30.1121, 6.375, 0.0, 0.0], [0.2724, 0.0016, 29.3719, 6.75, 0.0, 0.0], [0.277, 0.0016, 28.8839, 6.75, 0.0, 0.0], [0.2879, 0.0017, 48.6221, 6.4286, 0.0, 0.0], [40000.0, 234.375, 0.0, 9.0, 0.0, 0.0], [0.1525, 0.0009, 26.2257, 7.5, 0.0, 0.0], [0.0, 0.0, 0.0, 9.0, 0.0, 0.0], [0.3636, 0.0021, 44.0001, 6.375, 0.0, 0.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [0.279, 0.0016, 28.6768, 6.75, 0.0, 0.0], [0.1925, 0.0011, 41.5603, 6.75, 0.0, 0.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [0.3621, 0.0021, 33.1413, 6.5, 0.0, 0.0], [0.471, 0.0028, 42.4606, 6.3, 0.0, 0.0], [50000.0, 292.9688, 0.0001, 7.5, 0.0, 1.0], [0.405, 0.0024, 29.6311, 6.5, 0.0, 0.0], [39215.6863, 229.7794, 0.0001, 7.5, 0.0, 1.0], [76923.0769, 450.7212, 0.0001, 7.5, 0.0, 1.0], [2000000.0, 11718.75, 0.0, 9.0, 0.0, 0.0], [38834.9515, 227.5485, 0.0001, 7.5, 0.0, 1.0], [0.0, 0.0, 0.0, 9.0, 0.0, 0.0], [39215.6863, 229.7794, 0.0001, 7.5, 0.0, 1.0], [64516.129, 378.0242, 0.0001, 7.5, 0.0, 1.0]], "UDP_Flood": [[20.1873, 7.1385, 0.9907, 378.15, 0.0, 0.0], [36.5267, 12.4669, 0.1095, 432.0, 0.0, 0.0], [27.8729, 9.4724, 0.2153, 401.5, 0.0, 0.0], [41666.6667, 15258.7891, 0.0, 562.5, 0.0, 0.0], [2000000.0, 732421.875, 0.0, 562.5, 0.0, 0.0], [20.1853, 7.1378, 0.9908, 378.15, 0.0, 0.0], [27.4773, 9.338, 0.2184, 401.5, 0.0, 0.0], [27.5763, 9.3716, 0.2176, 401.5, 0.0, 0.0], [1000000.0, 374023.4375, 0.0, 574.5, 0.0, 0.0], [37.7366, 13.2483, 0.106, 442.0, 0.0, 0.0], [37.7918, 13.2677, 0.1058, 442.0, 0.0, 0.0], [1000000.0, 374023.4375, 0.0, 574.5, 0.0, 0.0], [2000000.0, 732421.875, 0.0, 562.5, 0.0, 0.0], [16997.1671, 7469.4582, 0.0004, 520.5, 0.0, 0.0], [28.0147, 9.5206, 0.2142, 401.5, 0.0, 0.0], [37.3689, 12.7543, 0.107, 432.0, 0.0, 0.0], [37.0968, 13.0237, 0.1078, 442.0, 0.0, 0.0], [1000000.0, 439453.125, 0.0, 520.5, 0.0, 0.0], [2000000.0, 732421.875, 0.0, 562.5, 0.0, 0.0], [36.9727, 12.9802, 0.1082, 442.0, 0.0, 0.0], [41666.6667, 15258.7891, 0.0, 562.5, 0.0, 0.0], [2000000.0, 783203.125, 0.0, 601.5, 0.0, 0.0], [46511.6279, 20000.6056, 0.0001, 510.3333, 0.0, 0.0], [28.0837, 9.5441, 0.2136, 401.5, 0.0, 0.0], [1000000.0, 391601.5625, 0.0, 601.5, 0.0, 0.0], [36.8111, 12.5639, 0.1087, 432.0, 0.0, 0.0], [37.0796, 13.0177, 0.1079, 442.0, 0.0, 0.0], [38.3487, 13.0887, 0.1043, 432.0, 0.0, 0.0], [38.1803, 13.4041, 0.1048, 442.0, 0.0, 0.0], [20.3531, 7.1971, 0.9827, 378.15, 0.0, 0.0], [1000000.0, 374023.4375, 0.0, 574.5, 0.0, 0.0], [2000000.0, 748046.875, 0.0, 574.5, 0.0, 0.0], [1000000.0, 391601.5625, 0.0, 601.5, 0.0, 0.0], [2000000.0, 732421.875, 0.0, 562.5, 0.0, 0.0], [36.6972, 12.8835, 0.109, 442.0, 0.0, 0.0], [20.3053, 7.1802, 0.985, 378.15, 0.0, 0.0], [666666.6667, 958333.3333, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 783203.125, 0.0, 601.5, 0.0, 0.0], [1000000.0, 391601.5625, 0.0, 601.5, 0.0, 0.0], [27.0893, 9.2061, 0.2215, 401.5, 0.0, 0.0], [27.8092, 9.4508, 0.2158, 401.5, 0.0, 0.0], [20.2997, 7.1782, 0.9852, 378.15, 0.0, 0.0], [2000000.0, 990234.375, 0.0, 760.5, 0.0, 0.0], [40816.3265, 15983.7372, 0.0, 601.5, 0.0, 0.0], [40816.3265, 15983.7372, 0.0, 601.5, 0.0, 0.0], [36.7084, 12.5289, 0.109, 432.0, 0.0, 0.0], [43478.2609, 17026.1549, 0.0, 601.5, 0.0, 0.0], [2000000.0, 748046.875, 0.0, 574.5, 0.0, 0.0], [697.026, 306.5372, 0.0086, 521.3333, 0.0, 0.0], [2000000.0, 748046.875, 0.0, 574.5, 0.0, 0.0], [1000000.0, 366210.9375, 0.0, 562.5, 0.0, 0.0], [37.5347, 12.8109, 0.1066, 432.0, 0.0, 0.0], [37.8301, 12.9117, 0.1057, 432.0, 0.0, 0.0], [36.8664, 12.5828, 0.1085, 432.0, 0.0, 0.0], [2000000.0, 732421.875, 0.0, 562.5, 0.0, 0.0], [27.5282, 9.3553, 0.218, 401.5, 0.0, 0.0], [1000000.0, 374023.4375, 0.0, 574.5, 0.0, 0.0], [27.8182, 9.4538, 0.2157, 401.5, 0.0, 0.0], [37.0621, 12.6496, 0.1079, 432.0, 0.0, 0.0], [2000000.0, 783203.125, 0.0, 601.5, 0.0, 0.0]], "DrDoS": [[2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [2000000.0, 1513671.875, 0.0, 1162.5, 0.0, 0.0], [1000000.0, 1437500.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 833984.375, 0.0, 640.5, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 447265.625, 0.0, 343.5, 0.0, 0.0], [0.0, 0.0, 0.0, 2208.0, 0.0, 0.0], [1.3314, 0.6709, 3.0044, 645.0, 0.0, 0.0], [1000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [165048.5437, 70919.2961, 0.0006, 444.3137, 0.0, 0.0], [400000.0, 575000.0, 0.0, 2208.0, 0.0, 0.0], [36.6505, 12.867, 0.1091, 442.0, 0.0, 0.0], [1000000.0, 631835.9375, 0.0, 970.5, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [1000000.0, 489257.8125, 0.0, 751.5, 0.0, 0.0], [41666.6667, 0.0, 0.0001, 0.0, 0.0, 1.0], [1000000.0, 206054.6875, 0.0, 316.5, 0.0, 0.0], [2000000.0, 447265.625, 0.0, 343.5, 0.0, 0.0], [1000000.0, 594726.5625, 0.0, 913.5, 0.0, 0.0], [1000000.0, 1437500.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [12435.2332, 4760.3627, 0.001, 428.6667, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [1000000.0, 366210.9375, 0.0, 562.5, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 945312.5, 0.0, 726.0, 0.0, 0.0], [44444.4444, 9939.2361, 0.0, 343.5, 0.0, 0.0], [2000000.0, 447265.625, 0.0, 343.5, 0.0, 0.0], [2000000.0, 796875.0, 0.0, 612.0, 0.0, 0.0], [2000000.0, 939453.125, 0.0, 721.5, 0.0, 0.0], [0.3522, 0.0, 11.3561, 0.0, 0.0, 0.0], [41666.6667, 9318.0339, 0.0, 343.5, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [28758.1699, 12357.0261, 0.0038, 444.0, 0.0, 0.0], [5239.3053, 2251.264, 0.0382, 442.2, 0.0, 0.0], [1.3315, 0.671, 3.004, 645.0, 0.0, 0.0], [666666.6667, 149088.5417, 0.0, 343.5, 0.0, 0.0], [2000000.0, 447265.625, 0.0, 343.5, 0.0, 0.0], [2000000.0, 845703.125, 0.0, 649.5, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 2828125.0, 0.0, 2172.0, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [0.0, 0.0, 0.0, 343.5, 0.0, 0.0], [2000000.0, 1138671.875, 0.0, 874.5, 0.0, 0.0], [71428.5714, 30854.7247, 0.0001, 512.6667, 0.0, 0.0], [2000000.0, 2875000.0, 0.0, 2208.0, 0.0, 0.0], [2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [2000000.0, 857421.875, 0.0, 658.5, 0.0, 0.0], [2000000.0, 789062.5, 0.0, 606.0, 0.0, 0.0], [2000000.0, 1027343.75, 0.0, 789.0, 0.0, 0.0], [2000000.0, 1015625.0, 0.0, 780.0, 0.0, 0.0], [0.0, 0.0, 0.0, 2172.0, 0.0, 0.0], [2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [2000000.0, 0.0, 0.0, 0.0, 0.0, 0.0], [9367.6815, 2986.8633, 0.0004, 403.25, 0.0, 0.0], [42553.1915, 9516.2899, 0.0, 343.5, 0.0, 0.0], [0.0, 0.0, 0.0, 2208.0, 0.0, 0.0]]};
+const COLORS = {Benign:'var(--benign)',SYN_Flood:'var(--syn)',UDP_Flood:'var(--udp)',DrDoS:'var(--drdos)'};
+const TAGCLASS = {Benign:'t-benign',SYN_Flood:'t-syn',UDP_Flood:'t-udp',DrDoS:'t-drdos'};
+
+function classifyTree(features){
+  let node = 0;
+  while(MODEL.feature[node] !== -2){
+    node = features[MODEL.feature[node]] <= MODEL.threshold[node] ? MODEL.children_left[node] : MODEL.children_right[node];
+  }
+  return {label: MODEL.classes[MODEL.class_id[node]], confidence: MODEL.node_confidence[node]};
+}
+function classify(features){ return classifyTree(features); }
+
+function genFlow(mode){
+  const r = Math.random();
+  let cls;
+  if(mode==='benign') cls = r<0.9 ? 'Benign' : ['SYN_Flood','UDP_Flood','DrDoS'][Math.floor(Math.random()*3)];
+  else if(mode==='syn') cls = r<0.8 ? 'SYN_Flood' : 'Benign';
+  else if(mode==='udp') cls = r<0.8 ? 'UDP_Flood' : 'Benign';
+  else if(mode==='drdos') cls = r<0.8 ? 'DrDoS' : 'Benign';
+  else cls = 'Benign';
+  const pool = FLOW_POOL[cls];
+  const features = pool[Math.floor(Math.random()*pool.length)];
+  return {truth: cls, features};
+}
+
+let mode='benign', flowCount=0, alertCount=0, correctCount=0, playing=false, timer=null;
+const timelineData=[];
+const classMixCount={Benign:0,SYN_Flood:0,UDP_Flood:0,DrDoS:0};
+
+document.querySelectorAll('.mode').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); mode=b.dataset.mode;
+  });
+});
+document.querySelector('[data-mode="benign"]').classList.add('active');
+
+function fmt(n,d=1){return Number(n).toFixed(d);}
+
+function addRow(flow, result){
+  const tbody = document.getElementById('feedBody');
+  const tr = document.createElement('tr');
+  const t = new Date().toLocaleTimeString();
+  const isMatch = flow.truth === result.label;
+  if(!isMatch) tr.classList.add('row-bad');
+  tr.innerHTML = `<td>${t}</td><td>${fmt(flow.features[0],0)}</td><td>${fmt(flow.features[1],0)}</td>
+    <td>${fmt(flow.features[2],2)}s</td><td>${fmt(flow.features[4],2)}</td><td>${fmt(flow.features[5],2)}</td>
+    <td><span class="tag ${TAGCLASS[flow.truth]}">${flow.truth.replace('_',' ')}</span></td>
+    <td><span class="tag ${TAGCLASS[result.label]}">${result.label.replace('_',' ')}</span></td>
+    <td>${fmt(result.confidence*100,1)}%</td>
+    <td class="${isMatch?'match-ok':'match-bad'}">${isMatch?'✓':'✗'}</td>`;
+  tbody.insertBefore(tr, tbody.firstChild);
+  while(tbody.children.length>14) tbody.removeChild(tbody.lastChild);
+}
+
+function drawTimeline(){
+  const c = document.getElementById('timeline');
+  const dpr = window.devicePixelRatio||1;
+  const w = c.clientWidth, h = 90;
+  c.width = w*dpr; c.height = h*dpr;
+  const ctx = c.getContext('2d'); ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,w,h);
+  const n = timelineData.length; if(!n) return;
+  const bw = w/60;
+  timelineData.slice(-60).forEach((label,i)=>{
+    const idx = 60 - Math.min(60,n) + i;
+    const x = idx*bw;
+    const colorMap = {Benign:getCss('--benign'),SYN_Flood:getCss('--syn'),UDP_Flood:getCss('--udp'),DrDoS:getCss('--drdos')};
+    const hgt = label==='Benign' ? 24 : 80;
+    ctx.fillStyle = colorMap[label];
+    ctx.fillRect(x+1, h-hgt, Math.max(bw-2,1), hgt);
+  });
+}
+function getCss(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+function updateClassMix(){
+  const el = document.getElementById('classMix');
+  const total = Object.values(classMixCount).reduce((a,b)=>a+b,0)||1;
+  el.innerHTML = Object.entries(classMixCount).map(([k,v])=>{
+    const pct = (v/total*100).toFixed(0);
+    return `<div style="margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--sub);margin-bottom:3px;"><span>${k.replace('_',' ')}</span><span>${v}</span></div>
+      <div style="background:var(--line);border-radius:4px;height:6px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${COLORS[k]};"></div>
+      </div></div>`;
+  }).join('');
+}
+
+function tick(){
+  const flow = genFlow(mode);
+  const result = classify(flow.features);
+  flowCount++;
+  if(flow.truth === result.label) correctCount++;
+  if(result.label!=='Benign') alertCount++;
+  classMixCount[result.label]++;
+  timelineData.push(result.label);
+  addRow(flow, result);
+  drawTimeline();
+  updateClassMix();
+  document.getElementById('statFlows').textContent = flowCount;
+  document.getElementById('statAlerts').textContent = alertCount;
+  document.getElementById('statLiveAcc').textContent = (correctCount/flowCount*100).toFixed(1)+'%';
+}
+
+document.getElementById('btnPlay').addEventListener('click', function(){
+  playing = !playing;
+  this.textContent = playing ? '⏸ Pause stream' : '▶ Start stream';
+  this.classList.toggle('primary', !playing);
+  if(playing){ tick(); timer=setInterval(tick, 650); }
+  else { clearInterval(timer); }
+});
+
+window.addEventListener('resize', drawTimeline);
+
+// static panels
+document.getElementById('statAcc').textContent = (MODEL.accuracy*100).toFixed(1)+'%';
+document.getElementById('metricsBody').innerHTML = MODEL.classes.map((c,i)=>
+  `<tr><td><span class="tag ${TAGCLASS[c]}">${c.replace('_',' ')}</span></td><td>${(MODEL.precision[i]*100).toFixed(1)}%</td><td>${(MODEL.recall[i]*100).toFixed(1)}%</td><td>${(MODEL.f1[i]*100).toFixed(1)}%</td></tr>`
+).join('');
+
+const cm = MODEL.confusion_matrix;
+let cmHtml = '<thead><tr><th></th>'+MODEL.classes.map(c=>`<th>${c.replace('_',' ')}</th>`).join('')+'</tr></thead><tbody>';
+cm.forEach((row,i)=>{
+  cmHtml += `<tr><th style="text-align:left;color:var(--sub);">${MODEL.classes[i].replace('_',' ')}</th>` +
+    row.map((v,j)=>{
+      const max = Math.max(...row);
+      const isDiag = i===j;
+      const bg = isDiag ? 'rgba(127,191,143,.25)' : (v>0?'rgba(214,95,95,.18)':'transparent');
+      return `<td class="cm-cell" style="background:${bg};">${v}</td>`;
+    }).join('') + '</tr>';
+});
+cmHtml += '</tbody>';
+document.getElementById('cmTable').innerHTML = cmHtml;
+updateClassMix();
+drawTimeline();
+
+const COMPARISON = [{"name": "Random Forest", "accuracy": 0.9415, "precision": 0.9429, "recall": 0.9415, "f1": 0.9409, "train_time_s": 1.102, "infer_time_ms": 0.0177}, {"name": "XGBoost", "accuracy": 0.94, "precision": 0.9412, "recall": 0.94, "f1": 0.9394, "train_time_s": 0.661, "infer_time_ms": 0.0097}, {"name": "Decision Tree", "accuracy": 0.9347, "precision": 0.9366, "recall": 0.9347, "f1": 0.934, "train_time_s": 0.0, "infer_time_ms": 0.0002}, {"name": "SVM (RBF)", "accuracy": 0.79, "precision": 0.8264, "recall": 0.79, "f1": 0.7802, "train_time_s": 1.996, "infer_time_ms": 0.2091}, {"name": "Naive Bayes", "accuracy": 0.777, "precision": 0.8422, "recall": 0.777, "f1": 0.7598, "train_time_s": 0.005, "infer_time_ms": 0.0005}, {"name": "Logistic Regression", "accuracy": 0.7043, "precision": 0.7161, "recall": 0.7043, "f1": 0.7008, "train_time_s": 0.12, "infer_time_ms": 0.0002}];
+const maxAcc = Math.max(...COMPARISON.map(m=>m.accuracy));
+const minAcc = Math.min(...COMPARISON.map(m=>m.accuracy));
+document.getElementById('cmpBody').innerHTML = COMPARISON.map(m=>{
+  const isLive = m.name==='Decision Tree';
+  const pct = ((m.accuracy - minAcc) / (maxAcc - minAcc) * 80 + 20).toFixed(0);
+  return `<tr>
+    <td>${m.name}${isLive ? ' <span class="pill">live demo</span>' : ''}</td>
+    <td><div style="display:flex;align-items:center;gap:8px;">
+      <div style="background:var(--line);border-radius:4px;height:6px;width:60px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:var(--accent);"></div>
+      </div>${(m.accuracy*100).toFixed(2)}%</div></td>
+    <td>${(m.precision*100).toFixed(2)}%</td>
+    <td>${(m.recall*100).toFixed(2)}%</td>
+    <td>${(m.f1*100).toFixed(2)}%</td>
+    <td>${m.train_time_s}s</td>
+    <td>${m.infer_time_ms}ms</td>
+  </tr>`;
+}).join('');
+</script>
+</body>
+</html>
